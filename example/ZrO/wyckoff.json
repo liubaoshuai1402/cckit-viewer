@@ -1,0 +1,40 @@
+{
+  "mode": "build",
+  "space_group": 189,
+  "lattice": {
+    "a": 5.285,
+    "c": 3.179
+  },
+  "sites": [
+    {
+      "element": "Zr",
+      "wyckoff": "1a",
+      "coords": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "coordinate_mode": "equivalent"
+    },
+    {
+      "element": "Zr",
+      "wyckoff": "2d",
+      "coords": [
+        0.3333333333333333,
+        0.6666666666666666,
+        0.5
+      ],
+      "coordinate_mode": "equivalent"
+    },
+    {
+      "element": "O",
+      "wyckoff": "3f",
+      "coords": [
+        0.5,
+        0.0,
+        0.0
+      ],
+      "coordinate_mode": "equivalent"
+    }
+  ]
+}

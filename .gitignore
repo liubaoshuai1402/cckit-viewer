@@ -1,0 +1,10 @@
+build/
+dist/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local reference papers and generated trajectories
+/example/*.pdf
+/example/**/*_all_frames.xyz

@@ -1,0 +1,39 @@
+{
+  "mode": "build",
+  "csl_mode": "near",
+  "rotation_axis": [
+    0,
+    0,
+    1
+  ],
+  "rotation_angle_deg": 32.0,
+  "sigma": 5,
+  "max_sigma": 6,
+  "gb_plane": [
+    2,
+    -1,
+    0
+  ],
+  "mirror": true,
+  "normal_distance": 0.0,
+  "vacuum": 0.0,
+  "normal_ortho": false,
+  "plane_ortho": false,
+  "termination_shift": {
+    "dp1": 0.0,
+    "dp2": 0.0
+  },
+  "tolerances": {
+    "du": 0.2,
+    "area": 0.2,
+    "deformation": 0.1,
+    "integer": 0.01
+  },
+  "angle_start_deg": 0.0,
+  "angle_stop_deg": 180.0,
+  "angle_step_deg": 1.0,
+  "cnid_grid": [
+    4,
+    4
+  ]
+}
