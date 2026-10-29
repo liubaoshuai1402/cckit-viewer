@@ -3,22 +3,30 @@
 CCkitViewer is a standalone desktop project, moved from CCkit's `visualize/`
 directory to `D:\Github_repositories\CCkitViewer`. Run the commands below from
 the CCkitViewer project root. Its source, feature backends, examples and build
-configuration do not require a CCkit checkout. The existing executable and
-launcher filenames are retained. `AGENTS.md` is preserved unchanged from the
-original directory; its `visualize/` paths refer to this project root, and its
-references to CCkit documentation describe the original repository layout.
+configuration do not require a CCkit checkout. The application and packaged
+executable are named **CCkitViewer**. The entry point is `viewer.py`, with
+`run_viewer.bat` and `run_viewer_exe.bat` as the source and standalone launchers.
+`AGENTS.md` documents the standalone project's development instructions;
+all relative paths and commands in it use this repository root.
 
 The desktop application is organized around registered visualization features.
-The first connected feature is **OmniGB**, the grain-boundary builder backed by
-`core/omnigb/omnigb_backend.py`. The feature selector and right-hand card are
+The first connected feature is **Bicrystal Builder**, the grain-boundary builder backed by
+`core/bicrystal/bicrystal_backend.py`. The feature selector and right-hand card are
 designed so future CCkit scripts can add their own names and parameter cards;
 the currently unimplemented entries remain visibly reserved instead of being
 treated as working modelers. See [AGENTS.md](AGENTS.md) for the extension
 contract.
 
-This folder contains a Windows desktop viewer for the OmniGB `model-gb.py`
-build and scan modes. The left side renders a generated bicrystal with
-PyVista/VTK. The right side loads and edits `gbin.json`; valid build changes
+The Windows desktop viewer supports crystal structures and trajectories,
+Bicrystal Builder grain-boundary modeling, Surface Builder, Interface Builder, and Wyckoff crystal
+generation. The left side renders structures with PyVista/VTK, while the
+right side displays the selected feature's parameter card.
+
+For Bicrystal Builder's build and scan modes, the right side starts with built-in
+parameters based on `example/Cu/gbin.json`, initially in **Scan CSL candidates**
+mode. Select a structure to run with
+these defaults; importing `gbin.json` is optional and replaces the current
+configuration. Valid build changes
 rebuild the preview after a short debounce, while scan mode runs the CSL angle
 sweep in a worker and displays the successful rows. The `dp1` and `dp2`
 termination controls have their own adjustment steps; the two CNID subdivision
@@ -30,12 +38,15 @@ bicrystal cell. The viewport has a white background with alpha transparency.
 Both the orientation marker and the plot axes explicitly label x, y, and z;
 the labels are enlarged and bold, with red, green, and blue direction arrows.
 
-The **OmniGB mode** selector changes between **Build boundary** and **Scan CSL
+The **Bicrystal Builder mode** selector changes between **Build boundary** and **Scan CSL
 candidates**. Build exposes the rotation axis, angle, target Sigma, and
 symmetric GB plane. Scan exposes the angle start, stop, increment, and a list
-of successful results. CSL policy, rotation axis, maximum Sigma, tolerances,
-and all live adjustment values are kept in the same JSON document; switching
-mode changes only `mode`, so shared values are not reset. A scan result can be
+of successful results. Build-only live adjustments (`dp1`, `dp2`, CNID grid,
+GB spacing, vacuum, orthogonality and mirror) and the model summary are hidden
+in scan mode. The mode cards size themselves to the visible content.
+CSL policy, rotation axis, maximum Sigma, tolerances, and both modes' values
+are kept in the same JSON document; switching mode changes only `mode`, and
+editing scan controls preserves the hidden build values. A scan result can be
 copied into build mode, and successful rows can be exported as
 `GB_scan_results.csv`.
 
@@ -45,8 +56,13 @@ values retain scientific notation. The exported file remains a standard CSV.
 
 Numeric and option controls consume mouse-wheel events, so scrolling over a
 value or a dropdown neither changes it nor puts it into an editing state.
+Wrapped descriptions and summaries use Qt's width-dependent height calculation
+during layout. Their cards allow vertical growth, and the scroll area updates
+its content height. Label resize handlers do not force a minimum height after
+the following rows have already been positioned. Shared label behavior is
+implemented in `viewer_widgets.py`.
 
-The OmniGB card also exposes InterfaceMaster's `mirror` option. It is written
+The Bicrystal Builder card also exposes InterfaceMaster's `mirror` option. It is written
 as the JSON boolean `mirror` in `gbin.json`; enabling it asks InterfaceMaster
 to construct the second grain from a reflected copy of the first grain.
 The same card exposes `GB spacing` (`normal_distance`) and `External vacuum`
@@ -61,21 +77,30 @@ Feature code is organized under `core/`:
 
 ```text
 core/
-├── omnigb/
-│   └── omnigb_backend.py
+├── bicrystal/
+│   └── bicrystal_backend.py
+├── surface/
+│   ├── surface_backend.py
+│   └── surface_panel.py
 ├── interface/
 │   ├── interface_backend.py
+│   ├── pymatgen_engine.py
+│   ├── interface_master_engine.py
+│   ├── commensurability.py
+│   ├── registry_analysis.py
+│   ├── interface_overlay.py
 │   └── interface_panel.py
 └── wyckoff/
     ├── wyckoff_model.py
     └── wyckoff_panel.py
 ```
 
-The OmniGB and Interface Builder backends were copied from
-CCkit's `Scripts/model/model_gb.py` and `Scripts/model/model_heterointerface.py`.
-Their CLI originals remain in CCkit. The GUI copies use distinct
-filenames so the CCkit command dispatcher's recursive search stays unambiguous.
-Interface Builder locates shared OmniGB helpers in `core/omnigb/`.
+The Bicrystal Builder backend was copied from CCkit's `Scripts/model/model_gb.py`;
+its CLI original remains in CCkit. The GUI copy uses a distinct filename so
+the CCkit command dispatcher's recursive search stays unambiguous.
+Interface Builder dispatches to independent pymatgen and interface-master engines
+under `core/interface/`. The InterfaceMaster adapter adds planar rational-period
+analysis without changing the upstream checkout or using Bicrystal Builder's settings.
 The Wyckoff backend and the independent parameter card modules have moved into
 their feature directories. The application shell and registry remain at the
 top level. New feature implementations must follow this organization.
@@ -91,12 +116,12 @@ Use a build environment that contains pymatgen, the GUI packages, and
 PyInstaller:
 
 ```powershell
-python -m pip install -r requirements-gb-viewer.txt
+python -m pip install -r requirements-viewer.txt
 ```
 
 InterfaceMaster is loaded from the local checkout in
 `D:\Github_repositories\interface_master`; it is not installed from the
-configured PyPI mirror. `run_gb_viewer.bat` adds that sibling checkout to
+configured PyPI mirror. `run_viewer.bat` adds that sibling checkout to
 `PYTHONPATH` automatically. If you run the Python file directly, set it first:
 
 ```powershell
@@ -108,16 +133,22 @@ large supercells, but the viewer remains usable with software rendering.
 
 ## Start
 
-From the repository root, pass a structure and configuration file:
+From the repository root, pass a structure to use the built-in parameters:
 
 ```powershell
-.\run_gb_viewer.bat example\Cu\POSCAR_Cu example\Cu\gbin.json
+.\run_viewer.bat example\Cu\POSCAR_Cu
+```
+
+Optionally pass a configuration file to start with saved parameters:
+
+```powershell
+.\run_viewer.bat example\Cu\POSCAR_Cu example\Cu\gbin.json
 ```
 
 Or run the Python entry point directly:
 
 ```powershell
-python gb_viewer.py example\Cu\POSCAR_Cu example\Cu\gbin.json
+python viewer.py example\Cu\POSCAR_Cu example\Cu\gbin.json
 ```
 
 The top toolbar also has **Load structure…** and **Load config…** actions,
@@ -139,7 +170,7 @@ distance. Pairs not listed in a saved preference use the global range.
 
 ## CNID grid and frame navigation
 
-The OmniGB build card exposes **CNID u1 subdivisions** and **CNID u2
+The Bicrystal Builder build card exposes **CNID u1 subdivisions** and **CNID u2
 subdivisions** in place of the Cartesian translation controls. The JSON key
 is `"cnid_grid": [n1, n2]`; the viewer defaults to `[4, 4]`. Each direction
 accepts a positive integer up to 1000. The grid generates `n1*n2` frames with
@@ -185,11 +216,13 @@ the destination is replaced only after the complete file has been written.
 Changing `gbin.json` keeps the current VTK camera position, direction, and
 zoom. The first preview establishes the initial view; later rebuilds reuse it.
 
-When no arguments are provided, the source viewer looks for `ZrO2.cif` and
-an optional `gbin.json` in `example/`. Double-clicking the standalone exe opens
-an empty viewer with file-loading buttons. A brief splash precedes the main
-window. Startup errors appear in a dialog, with a full traceback in
-`%TEMP%\CCkitGBViewer_startup.log`. The viewer supports both `gbin.json`
+When no arguments are provided, the source viewer looks for `ZrO2.cif` in
+`example/` and uses the built-in Bicrystal Builder parameters. JSON is loaded only when
+passed as an argument or imported in the UI. Double-clicking the standalone exe opens
+a viewer with default Bicrystal Builder parameters and file-loading buttons; choosing
+a structure is sufficient to start without importing JSON. A brief splash
+precedes the main window. Startup errors appear in a dialog, with a full traceback in
+`%TEMP%\CCkitViewer_startup.log`. The viewer supports both `gbin.json`
 `mode: "build"` and `mode: "scan"`.
 
 The preview is built in a temporary directory and does not overwrite the
@@ -205,9 +238,9 @@ PyVista, and the local InterfaceMaster code; the resulting executable does
 not require Python or InterfaceMaster on the target machine.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_gb_viewer.ps1 `
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_viewer.ps1 `
   -PythonExecutable D:\miniconda3\envs\interface\python.exe
-.\run_gb_viewer_exe.bat example\Cu\POSCAR_Cu example\Cu\gbin.json
+.\run_viewer_exe.bat example\Cu\POSCAR_Cu example\Cu\gbin.json
 ```
 
 If the `interface` environment is already active, `-PythonExecutable` can be
@@ -224,16 +257,21 @@ QtCore from loading. Validate the frozen app itself with an exposed native
 window and an actual preview build, rather than checking only process lifetime.
 
 The portable program is created at
-`dist\CCkitGBViewer\CCkitGBViewer.exe` together with its runtime
-directory. Keep the whole `CCkitGBViewer` directory when copying it to another
+`dist\CCkitViewer\CCkitViewer.exe` together with its runtime
+directory. Keep the whole `CCkitViewer` directory when copying it to another
 Windows computer.
+
+Window titles, the startup splash, and error dialogs use the CCkitViewer name.
+Existing display preferences and remembered folders are retained across the
+rename. Rebuild with `build_viewer.ps1` to update an existing standalone
+installation; previously built executables keep their original name and UI.
 
 
 ## Three-index and hexagonal four-index notation
 
-OmniGB has independent notation selectors on the right of **Rotation axis**
-and **Symmetric GB plane**. **三指数** uses [UVW] for directions and (hkl)
-for planes; **六方四指数** uses [uvtw] and (hkil). The redundant t/i index is
+Bicrystal Builder has independent notation selectors on the right of **Rotation axis**
+and **Symmetric GB plane**. **Miller indices** use [UVW] for directions and (hkl)
+for planes; **Miller–Bravais indices** use [uvtw] and (hkil). The redundant t/i index is
 computed automatically and displayed read-only. Changing the selector
 converts the values rather than reinterpreting the same digits.
 
@@ -259,52 +297,168 @@ cell first. The program does not silently standardize input structures.
 Directions convert to [u-t, v-t, w]; planes convert to (h,k,l). Conventional
 to primitive-cell conversion is then performed by InterfaceMaster.
 
+## Surface Builder: oriented slabs and atomic terminations
+
+Select **Surface Builder** and import a bulk structure. Enter the surface plane
+and two nonparallel in-plane crystal directions, all in the input cell's basis.
+Three-index and standard hexagonal Miller–Bravais notation are supported.
+The directions must satisfy the zone law `hU + kV + lW = 0` and form a
+right-handed pair with the selected plane normal. The program reports invalid
+directions instead of projecting or silently changing them.
+
+Each direction is reduced to coprime integer indices in the input basis;
+**Repeats along a/b** scale those translation vectors. The bulk is not
+converted to another conventional or primitive cell. The generated surface
+may therefore be larger than a minimal primitive surface cell. No strain,
+surface reconstruction, passivation or atom deletion for close contacts is applied.
+Output a/b follow the selected directions, with a along Cartesian x and b in
+the xy plane. The c vector is perpendicular to the surface along z.
+
+**Cut-window thickness** is the width of a bulk interval retained along the
+normal. Since atomic layers are discrete, the outermost-atom thickness can
+be smaller; the summary reports both. **Vacuum gap** is the exact normal
+separation between outermost atomic planes of neighboring periodic slabs,
+split equally above and below the centered slab.
+
+Click **Generate surface** once to populate **Interlayer cut** choices. Each
+choice cuts through an atomic-layer gap and lists its phase and bottom-layer
+elements. Selecting another cut changes the exposed layers; the summary shows
+the actual top and bottom elements. The cuts are not symmetry-filtered.
+Alternatively, choose **Custom cut position** and specify the lower boundary
+as a fraction of the reduced (hkl) normal repeat. The retained interval is
+`[cut, cut + thickness)`; phase 1 is equivalent to phase 0 up to a bulk
+translation. Top and bottom terminations are coupled to the chosen thickness.
+**Layer tolerance** groups nearby atomic heights for cut enumeration and
+exposed-element reporting; it does not move atoms.
+
+The independent card retains its controls across feature switches. Optional
+automatic rebuilding is initially off. The main viewer renders both surface
+planes, preserves the camera on rebuild and exports POSCAR, CIF or XYZ.
+Load/save **surface.json** through the card or the shared configuration actions;
+relative bulk paths resolve beside the JSON file.
+
+For example, load `example/Cu/POSCAR_Cu`, use plane `(001)` and directions
+`[100]`, `[010]`, then set thickness and vacuum. A matching JSON is included
+as `example/surface_Cu001.json`.
+
 ## Interface Builder: two-material heterostructures
 
-Select **Interface Builder** from **Visualization feature**. Its independent
-card uses `core/interface/interface_backend.py` and owns `interface.json`;
-OmniGB's input and JSON are retained when switching cards. The existing
-`model_interface.py` coherent-interface command is unaffected.
+Select **Interface Builder**, then choose the **Engine** directly below the
+feature selector. **pymatgen** implements Zur and McGill's *Lattice match: an
+application to heteroepitaxy* (1984). **interface-master** adds explicit rotation
+searches, minimal planar CSL/DSCL analysis and rational-period diagnostics inspired
+by Inoue et al. (2026), using InterfaceMaster's native lattice tools.
 
-1. Choose a substrate and a film structure.
-2. Specify each contact plane in that material's own input-cell basis. Each
-   plane has its own three/four-index selector, permitting cubic/hexagonal pairs.
-3. Optionally enable reference-direction alignment and enter one in-plane
-   direction for each material, again with separate notation selectors.
-4. Set the twist-angle interval and step, maximum substrate/film surface
-   area indices, and matching/deformation tolerances.
-5. Set separate normal repeats, terminations, spacing, vacuum and CNID grid.
-6. Choose **Find match and build CNID frames**. Automatic updates can be disabled.
+The following workflow describes **pymatgen**:
 
-The backend uses native `search_one_position_2D`, `compute_bicrystal_two_D`,
-and `get_bicrystal(two_D=True)` calls. It takes the first admissible 2D CSL
-match in ascending twist order, retaining the substrate lattice and applying
-the accepted transform to the film. It does not rank all possible matches
-by energy. Equal start/stop angles select one twist angle. Search stops
-between angles or sampling frames when newer settings supersede the request.
+1. Select substrate and film files and their contact planes in each input
+   cell's basis. Three indices and standard hexagonal four indices are supported.
+2. Adjust maximum area, area-ratio filter, relative length/angle tolerances,
+   bidirectional comparison, candidate limit, and termination enumeration.
+3. Click **Search matching cells**. Searches run in a background thread and
+   can be cancelled between native search steps. Retained results are sorted
+   by film area, then strain. A truncated candidate list is explicitly marked.
+4. Select a matching cell. Compare both unstrained areas, signed length and
+   angle mismatches, film von Mises strain, actual supercell matrices, and
+   reduced lattice vectors. The diagram overlays the two reduced cells at
+   equal scale with their first vectors aligned; it is not an atomic preview
+   or a crystallographic twist-angle plot.
+5. Choose a **film / substrate termination** pair. Set each slab's minimum
+   thickness in oriented unit planes or Å, the interface gap and external vacuum.
+6. Choose **Custom shift** for one structure at specified fractional a/b
+   offsets, or **Grid sampling** for multiple shifts starting at (0, 0).
+   Only the active mode's controls are shown; switching preserves both sets
+   of values. Click **Build selected interface**. View the atomic model in the main 3D viewport and
+   export the current structure as POSCAR/CIF/XYZ or all shift frames as XYZ.
 
-The result summary reports twist, both surface area indices, area, actual
-film metric strain and atom count. Exact mode follows InterfaceMaster's
-native exact-CSL policy; it must not be interpreted as a guarantee of an
-unchanged film metric. Near mode makes the accepted deformation explicit.
+The implementation uses pymatgen's `ZSLGenerator` and
+`CoherentInterfaceBuilder.get_interfaces`. The substrate is the reference;
+the film's in-plane lattice is strained into coherency. Shift sampling covers
+the matched supercell's a/b vectors, not a CNID cell. Geometry edits reuse
+cached lattice searches; changing files, planes, or matching settings requires
+a new search. Auto rebuilding selected geometry is optional and initially off.
+All numeric and selection controls consume mouse-wheel events.
 
-The same zero-based frame slider and current/all-frame exports are shared
-with OmniGB. Interface plane markers follow the separate slab thicknesses
-and spacing rather than assuming the junction lies halfway through the cell.
-With external vacuum, only the internal junction is marked.
+**Load config…** routes to this card. The collapsible **interface.json** group
+also provides load/save/apply actions. Relative structure paths in loaded JSON
+resolve beside the JSON file; a manually entered relative film path resolves
+beside the substrate. Old InterfaceMaster JSON settings are rejected explicitly
+instead of silently acquiring different semantics.
 
-**Load config…** routes to the selected card. The Interface Builder card also
-provides **Load JSON…** and **Save JSON…**. Relative structure paths in a loaded
-JSON file resolve beside that JSON; a manually entered relative film path
-resolves beside the substrate. Export defaults to the substrate directory.
+For **interface-master**, choose the rotation interval/step, rational denominator,
+principal strain, area-change, CSL-index and commensurability limits, then search.
+The finite mesh is scanned completely; the retained list is ranked by σ, strain
+or area. A second diagram shows ideal planar lattice sites and a DSCL cell;
+continued-fraction and Farey guides explain 1D matching periods. Select the
+terminations, thickness, gap and vacuum, then build the atomic structure.
 
-Both the new backend and the independent card are included in the PyInstaller
-configuration. Rebuild the application manually to include these source changes
-in the standalone program.
+Both interface engines keep the two in-plane vectors as lattice a/b and the
+stacking/normal direction as c in previews and exports. The common plane
+renderer reads `interface_normal_axis=2` from frame metadata, so interface
+markers and the DSCL overlay follow fractional c without reordering the cell.
+Older frames without this marker retain their first-axis convention; Bicrystal
+Builder keeps its existing convention. This metadata stays internal and does
+not add custom properties to the XYZ comment line.
 
-## wyckoff model: build crystals from symmetry positions
+For **interface-master**, custom shifts can use either **DSCL cell** vectors or
+the **Matched a/b supercell** vectors. Enter coefficients **d1** and **d2** to
+generate one structure at `d1 × vector1 + d2 × vector2`. The new setting
+`custom_shift_basis` defaults to `supercell`, preserving old custom-shift JSON
+semantics. Grid sampling retains its independent `im_shift_basis` selection.
+The viewport status line shows `d1` and `d2` as coefficients of the selected
+shift-cell vectors and names the basis (DSCL cell or matched supercell).
+These are the original coefficients, before conversion to matched-supercell
+fractional coordinates or periodic wrapping. For a 2×3 grid, the last frame
+(index 5) therefore shows `d1=0.5, d2=0.7`, while calculations still use
+`1/2` and `2/3`. Older trajectories containing
+only `in_plane_offset` label those values as supercell fractional shifts.
+For **pymatgen**, coefficients always refer to the matched a/b supercell.
+Each built frame reports
+projected atomic registry, nearest cross-interface distance and close contacts;
+the frame slider updates these diagnostics. They ignore species in the distance
+metric and do not represent interface energies. No atom is silently removed.
+Built InterfaceMaster models also show a purple DSCL outline and its two
+translation vectors on the interface plane in the left 3D view, at their actual
+lengths. This overlay follows the plane visibility preference and the current
+frame. The right-side diagram retains a separately scaled DSCL inset.
+**Save matching / model report…** writes search results, matrices, matching-period
+guides and available current-model/frame diagnostics to JSON.
 
-Select **wyckoff model** from **Visualization feature**. The independent card
+Enter a **System label** (for example `hZrO-Zr`) in the atomic-interface card;
+an empty label uses the substrate-film reduced formulas. Export **Current
+frame** or **All frames** as **XYZ · extended format (*.xyz)** to retain the
+cell, PBC and per-frame `config_type` in the extended comment line. For
+interface-master the format is:
+
+```text
+hZrO-Zr_sigma_6.00_theta_30.0_zspacing_2.0_d1_0.5_d2_0.3
+```
+
+Sigma and theta refer to the actual candidate, formatted with two and one
+decimal places respectively in `config_type` and the interface result displays;
+calculations retain the original precision. zspacing is the interface gap
+(`gap`) in Å, and d1/d2 are coefficients in the selected basis. These three
+fields use exactly one decimal in `config_type`, their numeric controls and
+frame summaries. For example, a coefficient of `0.333333333333` is displayed
+as `0.3`; its full value remains in calculations and JSON reports. Editing or
+collecting an unchanged control does not replace its value with the rounded
+display. This rule applies to both engines. Interface XYZ
+exports contain only `config_type` as a custom property, alongside the standard
+`Lattice`, `Properties` and `pbc` fields. Shift vectors, frame indices,
+terminations, registry and other diagnostic metadata remain in the viewer and
+JSON report; they are not written to the XYZ comment line.
+Pymatgen uses `{system}_zsl_match_{number}_strain_{value}_zspacing_{value}_d1_{value}_d2_{value}`
+with the candidate's dimensionless von Mises strain, without inventing a Sigma
+or absolute twist angle. The current frame's tag is displayed for copying.
+
+See [pymatgen parameters and methodology](docs/interface_pymatgen.md) and
+[InterfaceMaster/Inoue methodology](docs/interface_master.md) for definitions,
+defaults and limitations. Source and PyInstaller configuration include both
+engines. Rebuild manually to update the standalone program.
+
+## Wyckoff model: build crystals from symmetry positions
+
+Select **Wyckoff model** from **Visualization feature**. The independent card
 uses `core/wyckoff/wyckoff_model.py` and does not require an input structure file:
 
 1. Enter a space-group number from 1 to 230. Its Hermann–Mauguin symbol updates
@@ -363,7 +517,7 @@ can save POSCAR, CIF or extended XYZ. With no input file, the export dialog
 uses the remembered folder (or the loaded configuration's directory as a
 fallback). Generated bulk crystals do not display grain-boundary planes.
 
-PyXtal is included in `requirements-gb-viewer.txt`; install these requirements
+PyXtal is included in `requirements-viewer.txt`; install these requirements
 in the Python environment used to launch or build the viewer. The PyInstaller
 configuration includes both Wyckoff modules and PyXtal's database files.
 Source changes require a manual rebuild to appear in the standalone `.exe`.

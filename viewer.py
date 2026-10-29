@@ -1,12 +1,12 @@
 # CCkit 功能说明：
 """Interactive Windows visualization shell for CCkit feature scripts.
 
-The viewer uses PySide6 and PyVista/VTK. It reads a crystal structure and
-``gbin.json``, samples a CNID grid or scans CSL candidates in worker threads,
-and renders the selected frame with a hardware-accelerated VTK viewport.
+The viewer uses PySide6 and PyVista/VTK. It reads a crystal structure and an
+optional ``gbin.json``, samples a CNID grid or scans CSL candidates in worker
+threads, and renders the selected frame with a hardware-accelerated VTK viewport.
 Extended XYZ and ASE trajectories can also be opened and exported.
 Feature names and their script ownership are supplied by ``feature_registry``;
-OmniGB is the first connected card and future scripts can add cards without
+Bicrystal Builder is the first connected card and future scripts can add cards without
 replacing the application shell. The application is intentionally separate
 from the CCkit command dispatcher: it is a desktop inspection tool rather
 than a batch command.
@@ -43,14 +43,16 @@ else:
     REPOSITORY_ROOT = Path(__file__).resolve().parent
 CORE_DIRECTORY = REPOSITORY_ROOT / "core"
 FEATURE_REGISTRY = create_default_registry(REPOSITORY_ROOT, core_directory=CORE_DIRECTORY)
-MODEL_SCRIPT = FEATURE_REGISTRY.get("omnigb").script_path
+MODEL_SCRIPT = FEATURE_REGISTRY.get("bicrystal").script_path
 STRUCTURE_FILE_FILTER = (
     "Structure files ("
     "*.cif *.vasp POSCAR* CONTCAR* *.xyz *.pdb *.res *.cssr *.xsf "
     "*.mson *.json *.yaml *.yml);;"
     "All files (*)"
 )
-STARTUP_LOG = Path(tempfile.gettempdir()) / "CCkitGBViewer_startup.log"
+STARTUP_LOG = Path(tempfile.gettempdir()) / "CCkitViewer_startup.log"
+# Keep the existing settings namespace so saved preferences and folders survive renaming.
+SETTINGS_APPLICATION = "GrainBoundaryViewer"
 
 
 @dataclass(frozen=True)
@@ -95,7 +97,7 @@ def _read_trajectory(path: Path) -> StructureTrajectory:
         from ase.io import iread
     except ImportError as exc:
         raise RuntimeError(
-            "Trajectory I/O requires ASE. Install requirements-gb-viewer.txt "
+            "Trajectory I/O requires ASE. Install requirements-viewer.txt "
             "in the Python environment running this viewer."
         ) from exc
     from pymatgen.core import Lattice, Structure
@@ -124,14 +126,14 @@ def _read_trajectory(path: Path) -> StructureTrajectory:
 def _write_xyz_frames(
     trajectory: StructureTrajectory, indices: range | list[int], target: Path
 ) -> None:
-    """Write extended XYZ with the cell, PBC and RBT sampling coordinates."""
+    """Write interface XYZ with only config_type beyond the structural fields."""
 
     try:
         from ase import Atoms
         from ase.io import write
     except ImportError as exc:
         raise RuntimeError(
-            "XYZ export requires ASE. Install requirements-gb-viewer.txt "
+            "XYZ export requires ASE. Install requirements-viewer.txt "
             "in the Python environment running this viewer."
         ) from exc
 
@@ -139,16 +141,24 @@ def _write_xyz_frames(
         for index in indices:
             structure = trajectory.frames[index]
             atoms = Atoms(
-                symbols=[str(site.specie) for site in structure],
+                symbols=[site.specie.symbol for site in structure],
                 positions=structure.cart_coords,
                 cell=structure.lattice.matrix,
                 pbc=structure.lattice.pbc,
             )
-            atoms.info.update(trajectory.metadata[index])
-            atoms.info["frame"] = index
+            metadata = trajectory.metadata[index]
+            if metadata.get("engine") in {"interface-master", "pymatgen"} or "config_type" in metadata:
+                # Interface diagnostics belong in the viewer / JSON report.
+                # Whitelist the requested XYZ property rather than leaking
+                # every internal frame field into the comment line.
+                if "config_type" in metadata:
+                    atoms.info["config_type"] = metadata["config_type"]
+            else:
+                atoms.info.update(metadata)
+                atoms.info["frame"] = index
             yield atoms
 
-    write(str(target), images(), format="extxyz", write_results=False)
+    write(str(target), images(), format="extxyz", write_info=True, write_results=False)
 
 
 def _export_trajectory(
@@ -183,7 +193,7 @@ def _configure_diagnostics() -> Any:
     """Keep Python and native crash details for double-click launches."""
 
     stream = STARTUP_LOG.open("w", encoding="utf-8", buffering=1)
-    stream.write(f"Starting CCkit GB Viewer: {sys.executable}\n")
+    stream.write(f"Starting CCkitViewer: {sys.executable}\n")
     if sys.stdout is None:
         sys.stdout = stream
     if sys.stderr is None:
@@ -193,7 +203,7 @@ def _configure_diagnostics() -> Any:
 
 
 def _load_model_module(script_path: Path = MODEL_SCRIPT) -> Any:
-    """Load the existing model-gb implementation without copying its logic."""
+    """Load a registered backend from its source or bundled core directory."""
 
     if not script_path.is_file():
         raise FileNotFoundError(f"feature script was not found: {script_path}")
@@ -206,7 +216,7 @@ def _load_model_module(script_path: Path = MODEL_SCRIPT) -> Any:
 
 
 def _read_config(path: Path) -> dict[str, Any]:
-    """Read a JSON object used by model-gb."""
+    """Read a JSON object used by Bicrystal Builder."""
 
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -266,7 +276,7 @@ def _build_structure(
 ) -> StructureTrajectory:
     """Build preview frames using the registered feature's own backend."""
 
-    feature = feature or FEATURE_REGISTRY.get("omnigb")
+    feature = feature or FEATURE_REGISTRY.get("bicrystal")
     if not feature.available or feature.script_path is None:
         raise ValueError(f"feature is not implemented yet: {feature.name}")
     model_gb = _load_model_module(feature.script_path)
@@ -275,6 +285,8 @@ def _build_structure(
             builder = model_gb.build_wyckoff_frames
         elif feature.key == "interface":
             builder = model_gb.build_interface_frames
+        elif feature.key == "surface":
+            builder = model_gb.build_surface_frames
         else:
             builder = model_gb.build_boundary_frames
         result = builder(input_path, config, progress=progress, cancelled=cancelled)
@@ -352,7 +364,7 @@ def _format_scan_table(rows: list[dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
-def _omnigb_parameters(config: dict[str, Any]) -> dict[str, Any]:
+def _bicrystal_parameters(config: dict[str, Any]) -> dict[str, Any]:
     """Read UI values with the same aliases and defaults as model-gb."""
 
     model_gb = _load_model_module()
@@ -441,15 +453,14 @@ def _qt_imports() -> tuple[Any, ...]:
             QScrollArea,
             QSizePolicy,
             QSplitter,
-            QStackedWidget,
             QVBoxLayout,
             QWidget,
         )
     except ImportError as exc:
         raise RuntimeError(
-            "GB viewer requires PySide6, pyvista, pyvistaqt, and vtk. "
+            "CCkitViewer requires PySide6, pyvista, pyvistaqt, and vtk. "
             "Install them with: python -m pip install -r "
-            "requirements-gb-viewer.txt "
+            "requirements-viewer.txt "
             f"(import error: {exc})"
         ) from exc
 
@@ -478,7 +489,6 @@ def _qt_imports() -> tuple[Any, ...]:
         QScrollArea,
         QSizePolicy,
         QSplitter,
-        QStackedWidget,
         QVBoxLayout,
         QWidget,
     )
@@ -487,7 +497,7 @@ def _qt_imports() -> tuple[Any, ...]:
 def _report_startup_error(error: BaseException) -> None:
     """Write a startup traceback and show it when the GUI has no console."""
 
-    message = "CCkit GB Viewer could not start.\n\n" + "".join(
+    message = "CCkitViewer could not start.\n\n" + "".join(
         traceback.format_exception(type(error), error, error.__traceback__)
     )
     try:
@@ -501,7 +511,7 @@ def _report_startup_error(error: BaseException) -> None:
         ctypes.windll.user32.MessageBoxW(
             0,
             f"{message}\n\nLog: {STARTUP_LOG}",
-            "CCkit Grain Boundary Viewer",
+            "CCkitViewer",
             0x10,
         )
     except (AttributeError, OSError):
@@ -604,9 +614,9 @@ def _bond_lines(
 
 
 def _grain_boundary_planes(
-    np: Any, pv: Any, structure: Any, fractions: Any = (0.0, 0.5)
+    np: Any, pv: Any, structure: Any, fractions: Any = (0.0, 0.5), *, normal_axis: int = 0,
 ) -> tuple[Any, ...]:
-    """Create the two periodic interface planes in the final GB cell."""
+    """Create interface or surface planes at the requested fractional positions."""
 
     lattice = np.asarray(structure.lattice.matrix, dtype=float)
     meshes = []
@@ -620,6 +630,8 @@ def _grain_boundary_planes(
             ],
             dtype=float,
         )
+        if normal_axis != 0:
+            fractional = np.roll(fractional, normal_axis, axis=1)
         vertices = np.dot(fractional, lattice)
         meshes.append(pv.PolyData(vertices, faces=np.asarray([4, 0, 1, 2, 3])))
     return tuple(meshes)
@@ -653,7 +665,6 @@ def create_application_classes() -> tuple[Any, Any]:
         QScrollArea,
         QSizePolicy,
         QSplitter,
-        QStackedWidget,
         QVBoxLayout,
         QWidget,
     ) = _qt_imports()
@@ -665,6 +676,7 @@ def create_application_classes() -> tuple[Any, Any]:
         QColorDialog,
         QDialog,
         QDialogButtonBox,
+        QLayout,
         QToolBar,
         QSlider,
         QSpinBox,
@@ -713,6 +725,10 @@ def create_application_classes() -> tuple[Any, Any]:
     QSpinBox = NoWheelSpinBox
     QSlider = NoWheelSlider
 
+    from viewer_widgets import WrappingLabel
+
+    QLabel = WrappingLabel
+
     class FeatureCardStack(QWidget):
         """Keep independent feature pages in a top-aligned, visible-only layout."""
 
@@ -724,7 +740,8 @@ def create_application_classes() -> tuple[Any, Any]:
             self._page_layout.setContentsMargins(0, 0, 0, 0)
             self._page_layout.setSpacing(0)
             self._page_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-            self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+            # Wrapped child pages must be allowed to exceed their wide size hint.
+            self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
 
         def addWidget(self, page: Any) -> int:
             """Retain a page's state while excluding it from layout when hidden."""
@@ -778,8 +795,13 @@ def create_application_classes() -> tuple[Any, Any]:
                 self.labels.append(label)
                 self.spins.append(spin)
             self.selector = QComboBox()
-            self.selector.addItem("三指数", "three")
-            self.selector.addItem("六方四指数", "four")
+            three_label = "Miller indices [UVW]" if kind == "direction" else "Miller indices (hkl)"
+            four_label = (
+                "Miller–Bravais indices [uvtw]"
+                if kind == "direction" else "Miller–Bravais indices (hkil)"
+            )
+            self.selector.addItem(three_label, "three")
+            self.selector.addItem(four_label, "four")
             self.selector.currentIndexChanged.connect(self._notation_changed)
             row.addWidget(self.selector)
             self.set_indices([0, 0, 1] if kind == "direction" else [1, 0, 0], "three")
@@ -941,7 +963,7 @@ def create_application_classes() -> tuple[Any, Any]:
             pair_layout.addWidget(pair_hint, row, 0, 1, 4)
             layout.addWidget(pair_group)
 
-            self.show_plane = QCheckBox("Show symmetric GB planes")
+            self.show_plane = QCheckBox("Show interface / surface planes")
             self.show_plane.setChecked(preferences["show_plane"])
             form.addRow(self.show_plane)
 
@@ -976,7 +998,7 @@ def create_application_classes() -> tuple[Any, Any]:
             )
 
         def choose_plane_color(self) -> None:
-            selected = QColorDialog.getColor(self.plane_color, self, "GB plane color")
+            selected = QColorDialog.getColor(self.plane_color, self, "Plane color")
             if selected.isValid():
                 self.plane_color = selected
                 self._update_color_button()
@@ -1044,7 +1066,7 @@ def create_application_classes() -> tuple[Any, Any]:
             if self.scope_combo.currentData() == "current":
                 self.format_combo.addItem("POSCAR", "poscar")
                 self.format_combo.addItem("CIF", "cif")
-            self.format_combo.addItem("Extended XYZ (*.xyz)", "extxyz")
+            self.format_combo.addItem("XYZ · extended format (*.xyz)", "extxyz")
             index = self.format_combo.findData(selected)
             if index >= 0:
                 self.format_combo.setCurrentIndex(index)
@@ -1127,16 +1149,16 @@ def create_application_classes() -> tuple[Any, Any]:
             else:
                 self.completed.emit(rows, csv_text)
 
-    class GrainBoundaryViewer(QMainWindow):
-        """Desktop editor and renderer for model-gb build configurations."""
+    class CCkitViewer(QMainWindow):
+        """Desktop editor and renderer for registered CCkit features."""
 
         def __init__(self, input_path: Path | None, config_path: Path | None) -> None:
             super().__init__()
-            self.setWindowTitle("CCkit · Grain Boundary Viewer")
+            self.setWindowTitle("CCkitViewer")
             self.resize(1440, 900)
             self.input_path = input_path
             self.config_path = config_path
-            self.active_feature = FEATURE_REGISTRY.get("omnigb")
+            self.active_feature = FEATURE_REGISTRY.get("bicrystal")
             self.worker: BuildWorker | None = None
             self.scan_worker: ScanWorker | None = None
             self.export_worker: StructureExportWorker | None = None
@@ -1177,7 +1199,7 @@ def create_application_classes() -> tuple[Any, Any]:
         def _load_preferences() -> dict[str, Any]:
             """Load display preferences saved by this Windows user."""
 
-            settings = QSettings("CCkit", "GrainBoundaryViewer")
+            settings = QSettings("CCkit", SETTINGS_APPLICATION)
             raw_pair_rules = str(settings.value("bond_pairs", "{}"))
             try:
                 pair_rules = json.loads(raw_pair_rules) if raw_pair_rules.strip() else {}
@@ -1204,7 +1226,7 @@ def create_application_classes() -> tuple[Any, Any]:
         def _save_preferences(preferences: dict[str, Any]) -> None:
             """Persist display preferences in the Windows user profile."""
 
-            settings = QSettings("CCkit", "GrainBoundaryViewer")
+            settings = QSettings("CCkit", SETTINGS_APPLICATION)
             for key, value in preferences.items():
                 if key == "bond_pairs":
                     value = json.dumps(value, ensure_ascii=False)
@@ -1215,7 +1237,7 @@ def create_application_classes() -> tuple[Any, Any]:
         def _dialog_directory(fallback: Path) -> Path:
             """Reuse the last selected folder across dialogs and app restarts."""
 
-            settings = QSettings("CCkit", "GrainBoundaryViewer")
+            settings = QSettings("CCkit", SETTINGS_APPLICATION)
             saved = str(settings.value("files/last_directory", ""))
             if saved:
                 directory = Path(saved).expanduser()
@@ -1227,7 +1249,7 @@ def create_application_classes() -> tuple[Any, Any]:
         def _remember_file_directory(path: Path) -> None:
             """Persist the folder from an accepted file selection."""
 
-            settings = QSettings("CCkit", "GrainBoundaryViewer")
+            settings = QSettings("CCkit", SETTINGS_APPLICATION)
             settings.setValue("files/last_directory", str(path.parent))
             settings.sync()
 
@@ -1267,7 +1289,7 @@ def create_application_classes() -> tuple[Any, Any]:
             self.frame_count_label = QLabel("/ 0")
             frame_row.addWidget(self.frame_count_label)
             left_layout.addLayout(frame_row)
-            self.render_status = QLabel("Select an input structure and gbin.json")
+            self.render_status = QLabel("Select an input structure to use the default parameters")
             self.render_status.setWordWrap(True)
             left_layout.addWidget(self.render_status)
 
@@ -1276,12 +1298,13 @@ def create_application_classes() -> tuple[Any, Any]:
             right_scroll.setMinimumWidth(430)
             panel = QWidget()
             panel_layout = QVBoxLayout(panel)
+            panel_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
             panel_layout.setContentsMargins(10, 10, 10, 10)
             panel_layout.setSpacing(8)
             panel_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
             feature_group = QGroupBox("Visualization feature")
-            feature_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+            feature_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
             feature_layout = QFormLayout(feature_group)
             self.feature_combo = QComboBox()
             for feature in FEATURE_REGISTRY.all():
@@ -1295,9 +1318,9 @@ def create_application_classes() -> tuple[Any, Any]:
             panel_layout.addWidget(feature_group, 0, Qt.AlignmentFlag.AlignTop)
 
             self.feature_stack = FeatureCardStack()
-            self.omnigb_panel = QWidget()
-            omnigb_layout = QVBoxLayout(self.omnigb_panel)
-            omnigb_layout.setContentsMargins(0, 0, 0, 0)
+            self.bicrystal_panel = QWidget()
+            bicrystal_layout = QVBoxLayout(self.bicrystal_panel)
+            bicrystal_layout.setContentsMargins(0, 0, 0, 0)
             panel_layout.addWidget(self.feature_stack, 0, Qt.AlignmentFlag.AlignTop)
 
             files = QGroupBox("Input files")
@@ -1307,21 +1330,21 @@ def create_application_classes() -> tuple[Any, Any]:
             input_button = QPushButton("Choose structure…")
             input_button.clicked.connect(self.choose_input)
             files_layout.addRow(self.input_label, input_button)
-            self.config_label = QLabel("not selected")
+            self.config_label = QLabel("Using built-in defaults (optional JSON import)")
             self.config_label.setWordWrap(True)
-            config_button = QPushButton("Choose gbin.json…")
+            config_button = QPushButton("Import gbin.json…")
             config_button.clicked.connect(self.choose_config)
             files_layout.addRow(self.config_label, config_button)
-            omnigb_layout.addWidget(files)
+            bicrystal_layout.addWidget(files)
 
-            mode_group = QGroupBox("OmniGB mode")
+            mode_group = QGroupBox("Bicrystal Builder mode")
             mode_layout = QFormLayout(mode_group)
             self.mode_combo = QComboBox()
             self.mode_combo.addItem("Build boundary", "build")
             self.mode_combo.addItem("Scan CSL candidates", "scan")
             self.mode_combo.currentIndexChanged.connect(self.mode_changed)
             mode_layout.addRow("Mode", self.mode_combo)
-            omnigb_layout.addWidget(mode_group)
+            bicrystal_layout.addWidget(mode_group)
 
             common_group = QGroupBox("Common CSL parameters")
             common_layout = QVBoxLayout(common_group)
@@ -1358,9 +1381,9 @@ def create_application_classes() -> tuple[Any, Any]:
                     decimals=5,
                     step=0.01,
                 )
-            omnigb_layout.addWidget(common_group)
+            bicrystal_layout.addWidget(common_group)
 
-            self.mode_stack = QStackedWidget()
+            self.mode_stack = FeatureCardStack()
             build_group = QGroupBox("Build parameters")
             build_layout = QVBoxLayout(build_group)
             self.build_angle_value, self.build_angle_step = self._make_value_row(
@@ -1426,9 +1449,10 @@ def create_application_classes() -> tuple[Any, Any]:
             self.export_scan_button.setEnabled(False)
             scan_layout.addWidget(self.export_scan_button)
             self.mode_stack.addWidget(scan_group)
-            omnigb_layout.addWidget(self.mode_stack)
+            bicrystal_layout.addWidget(self.mode_stack)
 
             summary = QGroupBox("Model summary")
+            self.build_summary_group = summary
             summary_layout = QFormLayout(summary)
             self.summary_mode = QLabel("—")
             self.summary_angle = QLabel("—")
@@ -1440,7 +1464,7 @@ def create_application_classes() -> tuple[Any, Any]:
             summary_layout.addRow("Sigma", self.summary_sigma)
             summary_layout.addRow("Axis", self.summary_axis)
             summary_layout.addRow("GB plane", self.summary_plane)
-            omnigb_layout.addWidget(summary)
+            bicrystal_layout.addWidget(summary)
 
             self.control_group = QGroupBox("Live adjustment")
             control_layout = QVBoxLayout(self.control_group)
@@ -1488,15 +1512,16 @@ def create_application_classes() -> tuple[Any, Any]:
             )
             self.mirror_check.toggled.connect(self.controls_changed)
             control_layout.addWidget(self.mirror_check)
-            omnigb_layout.addWidget(self.control_group)
+            bicrystal_layout.addWidget(self.control_group)
 
             self.auto_check = QPushButton("Auto refresh: on")
             self.auto_check.setCheckable(True)
             self.auto_check.setChecked(True)
             self.auto_check.clicked.connect(self.toggle_auto_refresh)
-            omnigb_layout.addWidget(self.auto_check)
+            bicrystal_layout.addWidget(self.auto_check)
 
-            editor_group = QGroupBox("gbin.json")
+            editor_group = QGroupBox("Current parameters (JSON)")
+            editor_group.setToolTip("Parameters work without a file; import or save gbin.json optionally.")
             editor_layout = QVBoxLayout(editor_group)
             self.json_editor = QPlainTextEdit()
             self.json_editor.setLineWrapMode(QPlainTextEdit.NoWrap)
@@ -1514,11 +1539,11 @@ def create_application_classes() -> tuple[Any, Any]:
             editor_buttons.addWidget(save_button)
             editor_buttons.addWidget(save_as_button)
             editor_layout.addLayout(editor_buttons)
-            omnigb_layout.addWidget(editor_group)
+            bicrystal_layout.addWidget(editor_group)
 
-            self.feature_stack.addWidget(self.omnigb_panel)
+            self.feature_stack.addWidget(self.bicrystal_panel)
             for feature in FEATURE_REGISTRY.all():
-                if feature.key == "omnigb":
+                if feature.key == "bicrystal":
                     continue
                 if feature.key == "wyckoff":
                     from core.wyckoff.wyckoff_panel import WyckoffPanel
@@ -1545,6 +1570,19 @@ def create_application_classes() -> tuple[Any, Any]:
                     self.interface_panel.build_requested.connect(self.build_interface_now)
                     self.interface_panel.failed.connect(self.interface_failed)
                     self.feature_stack.addWidget(self.interface_panel)
+                    continue
+                if feature.key == "surface":
+                    from core.surface.surface_panel import SurfacePanel
+
+                    self.surface_panel = SurfacePanel(
+                        _load_model_module(feature.script_path), CrystalIndexEditor,
+                        QSpinBox, QDoubleSpinBox, QComboBox, STRUCTURE_FILE_FILTER,
+                        self._dialog_directory, self._remember_file_directory,
+                    )
+                    self.surface_panel.changed.connect(self.surface_changed)
+                    self.surface_panel.build_requested.connect(self.build_surface_now)
+                    self.surface_panel.failed.connect(self.interface_failed)
+                    self.feature_stack.addWidget(self.surface_panel)
                     continue
                 placeholder = QGroupBox(feature.card_title)
                 placeholder_layout = QVBoxLayout(placeholder)
@@ -1646,7 +1684,7 @@ def create_application_classes() -> tuple[Any, Any]:
             decimals: int,
             step: float,
         ) -> Any:
-            """Create a labeled scalar editor used by both OmniGB modes."""
+            """Create a labeled scalar editor used by both Bicrystal Builder modes."""
 
             spin = QDoubleSpinBox()
             spin.setRange(minimum, maximum)
@@ -1690,6 +1728,8 @@ def create_application_classes() -> tuple[Any, Any]:
             return container
 
         def _active_input_path(self) -> Path | None:
+            if self.active_feature.key == "surface":
+                return self.surface_panel.input_path
             if self.active_feature.key == "wyckoff":
                 return self.wyckoff_panel.input_path
             return (
@@ -1698,6 +1738,8 @@ def create_application_classes() -> tuple[Any, Any]:
             )
 
         def _active_auto_refresh(self) -> bool:
+            if self.active_feature.key == "surface":
+                return self.surface_panel.auto_check.isChecked()
             if self.active_feature.key == "wyckoff":
                 return False
             return (
@@ -1706,6 +1748,8 @@ def create_application_classes() -> tuple[Any, Any]:
             )
 
         def _active_config_text(self) -> str:
+            if self.active_feature.key == "surface":
+                return json.dumps(self.surface_panel.config())
             if self.active_feature.key == "wyckoff":
                 return json.dumps(self.wyckoff_panel.config())
             return (
@@ -1718,7 +1762,20 @@ def create_application_classes() -> tuple[Any, Any]:
                 self.error_label.setText(error)
 
         def interface_changed(self) -> None:
+            self.feature_stack.updateGeometry()
+            if self._closing:
+                return
             if self.active_feature.key == "interface":
+                if not self.interface_panel.auto_check.isChecked():
+                    self._build_timer.stop()
+                if not self.interface_panel.ready_to_build():
+                    self._build_timer.stop()
+                    self._pending_config = None
+                    self.build_serial += 1
+                    if self.worker is not None and self.worker.isRunning() and not self._export_build_active:
+                        self.worker.requestInterruption()
+                    self.render_status.setText("Choose an engine and search matching cells before building")
+                    return
                 self.queue_build()
 
         def build_interface_now(self) -> None:
@@ -1746,6 +1803,27 @@ def create_application_classes() -> tuple[Any, Any]:
             if getattr(self, "_pending_config", None) is not None:
                 self._build_timer.start()
 
+        def surface_changed(self) -> None:
+            """Invalidate old surface requests and honor this card's rebuild setting."""
+
+            self.feature_stack.updateGeometry()
+            if self._closing or self.active_feature.key != "surface":
+                return
+            self._build_timer.stop()
+            self._pending_config = None
+            self.build_serial += 1
+            if self.worker is not None and self.worker.isRunning() and not self._export_build_active:
+                self.worker.requestInterruption()
+            if self.surface_panel.auto_check.isChecked():
+                self.queue_build()
+
+        def build_surface_now(self) -> None:
+            if self.active_feature.key != "surface":
+                return
+            self.queue_build()
+            if getattr(self, "_pending_config", None) is not None:
+                self._build_timer.start()
+
         def _feature_changed(self, index: int) -> None:
             """Switch independently owned cards and invalidate pending old builds."""
 
@@ -1764,6 +1842,12 @@ def create_application_classes() -> tuple[Any, Any]:
             elif feature.key == "wyckoff":
                 self.error_label.clear()
                 self.render_status.setText("Fill in Wyckoff parameters, then click Generate crystal")
+            elif feature.key == "interface":
+                self.error_label.clear()
+                self.render_status.setText("Choose an engine, search matching cells, then build an interface")
+            elif feature.key == "surface":
+                self.error_label.clear()
+                self.render_status.setText("Choose a bulk structure, plane and in-plane directions, then generate a surface")
             else:
                 self.queue_build()
 
@@ -1777,19 +1861,24 @@ def create_application_classes() -> tuple[Any, Any]:
             raise KeyError(f"unknown viewer feature: {key}")
 
         def _load_initial_files(self) -> None:
+            self._set_editor_config(_load_model_module().default_viewer_config())
             if self.input_path is not None and self.input_path.is_file():
                 self.input_label.setText(str(self.input_path))
-            if self.config_path is not None and self.config_path.is_file():
+            if self.config_path is not None:
                 self.config_label.setText(str(self.config_path))
                 try:
                     config = _read_config(self.config_path)
                 except Exception as exc:
                     self.error_label.setText(str(exc))
+                    return
                 else:
                     self._set_editor_config(config)
-                    self.queue_build()
+            self.queue_build()
 
         def choose_input(self) -> None:
+            if self.active_feature.key == "surface":
+                self.surface_panel.choose_structure()
+                return
             if self.active_feature.key == "wyckoff":
                 self.render_status.setText("Wyckoff model uses the space group, lattice and sites in its card")
                 return
@@ -1847,6 +1936,9 @@ def create_application_classes() -> tuple[Any, Any]:
             self._set_export_enabled(True)
 
         def choose_config(self) -> None:
+            if self.active_feature.key == "surface":
+                self.surface_panel.load_config()
+                return
             if self.active_feature.key == "wyckoff":
                 self.wyckoff_panel.load_config()
                 return
@@ -1887,7 +1979,7 @@ def create_application_classes() -> tuple[Any, Any]:
 
         def _sync_controls(self, config: dict[str, Any]) -> None:
             try:
-                model_values = _omnigb_parameters(config)
+                model_values = _bicrystal_parameters(config)
                 dp1, dp2 = _termination_values(config)
                 grid = _load_model_module().cnid_grid(config)
                 normal_distance = float(
@@ -1963,6 +2055,10 @@ def create_application_classes() -> tuple[Any, Any]:
 
             is_scan = mode == "scan"
             self.mode_stack.setCurrentIndex(1 if is_scan else 0)
+            self.control_group.setVisible(not is_scan)
+            self.build_summary_group.setVisible(not is_scan)
+            self.bicrystal_panel.layout().invalidate()
+            self.feature_stack.updateGeometry()
             self.run_scan_button.setEnabled(is_scan)
             has_results = bool(self.scan_rows)
             self.scan_result_combo.setEnabled(is_scan and has_results)
@@ -2039,29 +2135,8 @@ def create_application_classes() -> tuple[Any, Any]:
                 self.queue_build(config)
 
         def _update_config_from_controls(self, config: dict[str, Any]) -> dict[str, Any]:
-            """Copy every visible OmniGB control into one JSON object."""
+            """Copy shared and active-mode controls, retaining the other mode's values."""
 
-            shifts = config.setdefault("termination_shift", {})
-            if not isinstance(shifts, dict):
-                raise ValueError("termination_shift must be a JSON object")
-            if "dp1" in config:
-                config["dp1"] = self.dp1_value.value()
-            else:
-                shifts["dp1"] = self.dp1_value.value()
-            if "dp2" in config:
-                config["dp2"] = self.dp2_value.value()
-            else:
-                shifts["dp2"] = self.dp2_value.value()
-            config.pop("translation", None)
-            config.pop("dydz", None)
-            config["cnid_grid"] = [spin.value() for spin in self.cnid_grid_values]
-            count = config["cnid_grid"][0] * config["cnid_grid"][1]
-            self.cnid_grid_label.setText(f"{count} frames · indices 0–{count - 1}")
-            config["normal_distance"] = self.normal_distance_value.value()
-            config["vacuum"] = self.vacuum_value.value()
-            config["normal_ortho"] = self.normal_ortho_check.isChecked()
-            config["plane_ortho"] = self.plane_ortho_check.isChecked()
-            config["mirror"] = self.mirror_check.isChecked()
             config["rotation_axis"] = self.rotation_axis_editor.indices()
             config["rotation_axis_notation"] = self.rotation_axis_editor.notation()
             config["max_sigma"] = int(round(self.max_sigma_value.value()))
@@ -2071,13 +2146,36 @@ def create_application_classes() -> tuple[Any, Any]:
             config["tolerances"] = {
                 name: spin.value() for name, spin in self.tolerance_values.items()
             }
-            config["rotation_angle_deg"] = self.build_angle_value.value()
-            config["sigma"] = int(round(self.build_sigma_value.value()))
-            config["gb_plane"] = self.gb_plane_editor.indices()
-            config["gb_plane_notation"] = self.gb_plane_editor.notation()
-            config["angle_start_deg"] = self.scan_start_value.value()
-            config["angle_stop_deg"] = self.scan_stop_value.value()
-            config["angle_step_deg"] = self.scan_step_value.value()
+            if config.get("mode", "build") == "build":
+                shifts = config.setdefault("termination_shift", {})
+                if not isinstance(shifts, dict):
+                    raise ValueError("termination_shift must be a JSON object")
+                if "dp1" in config:
+                    config["dp1"] = self.dp1_value.value()
+                else:
+                    shifts["dp1"] = self.dp1_value.value()
+                if "dp2" in config:
+                    config["dp2"] = self.dp2_value.value()
+                else:
+                    shifts["dp2"] = self.dp2_value.value()
+                config.pop("translation", None)
+                config.pop("dydz", None)
+                config["cnid_grid"] = [spin.value() for spin in self.cnid_grid_values]
+                count = config["cnid_grid"][0] * config["cnid_grid"][1]
+                self.cnid_grid_label.setText(f"{count} frames · indices 0–{count - 1}")
+                config["normal_distance"] = self.normal_distance_value.value()
+                config["vacuum"] = self.vacuum_value.value()
+                config["normal_ortho"] = self.normal_ortho_check.isChecked()
+                config["plane_ortho"] = self.plane_ortho_check.isChecked()
+                config["mirror"] = self.mirror_check.isChecked()
+                config["rotation_angle_deg"] = self.build_angle_value.value()
+                config["sigma"] = int(round(self.build_sigma_value.value()))
+                config["gb_plane"] = self.gb_plane_editor.indices()
+                config["gb_plane_notation"] = self.gb_plane_editor.notation()
+            else:
+                config["angle_start_deg"] = self.scan_start_value.value()
+                config["angle_stop_deg"] = self.scan_stop_value.value()
+                config["angle_step_deg"] = self.scan_step_value.value()
             return config
 
         def controls_changed(self, *_args: Any) -> None:
@@ -2115,7 +2213,7 @@ def create_application_classes() -> tuple[Any, Any]:
                 self.apply_json_editor()
 
         def queue_build(self, config: dict[str, Any] | None = None) -> None:
-            if not self.active_feature.available:
+            if self._closing or not self.active_feature.available:
                 return
             source = self._active_input_path()
             if source is None or (self.active_feature.key != "wyckoff" and not source.is_file()):
@@ -2132,16 +2230,21 @@ def create_application_classes() -> tuple[Any, Any]:
                     config = json.loads(text)
                 if not isinstance(config, dict):
                     raise ValueError("configuration must be a JSON object")
-                config = (
-                    self.wyckoff_panel.backend.parameters(config)
-                    if self.active_feature.key == "wyckoff" else _viewer_config(config)
-                )
                 if self.active_feature.key == "interface":
                     config = self.interface_panel.backend.parameters(config)
+                    if not self.interface_panel.ready_to_build():
+                        self._pending_config = None
+                        return
                     if not config.get("film_structure"):
                         self._pending_config = None
                         self.render_status.setText("Select a film structure")
                         return
+                elif self.active_feature.key == "wyckoff":
+                    config = self.wyckoff_panel.backend.parameters(config)
+                elif self.active_feature.key == "surface":
+                    config = self.surface_panel.backend.parameters(config)
+                else:
+                    config = _viewer_config(config)
             except (OSError, RuntimeError, TypeError, ValueError) as exc:
                 self._pending_config = None
                 self.error_label.setText(f"JSON/config error: {exc}")
@@ -2204,8 +2307,12 @@ def create_application_classes() -> tuple[Any, Any]:
                 message = (
                     f"Expanding Wyckoff positions: {completed}/{total}…"
                     if self.active_feature.key == "wyckoff"
+                    else "Constructing oriented surface…"
+                    if self.active_feature.key == "surface"
                     else "Matching contact planes…"
                     if completed == 0 and self.active_feature.key == "interface"
+                    else f"Building interface shifts: {completed}/{total} frames…"
+                    if self.active_feature.key == "interface"
                     else f"Sampling CNID: {completed}/{total} frames…"
                 )
                 self.render_status.setText(message)
@@ -2382,12 +2489,14 @@ def create_application_classes() -> tuple[Any, Any]:
                 current = json.loads(self._active_config_text())
                 if not isinstance(current, dict):
                     return False
-                current = (
-                    self.wyckoff_panel.backend.parameters(current)
-                    if feature_key == "wyckoff" else _viewer_config(current)
-                )
                 if feature_key == "interface":
                     current = self.interface_panel.backend.parameters(current)
+                elif feature_key == "wyckoff":
+                    current = self.wyckoff_panel.backend.parameters(current)
+                elif feature_key == "surface":
+                    current = self.surface_panel.backend.parameters(current)
+                else:
+                    current = _viewer_config(current)
             except (OSError, RuntimeError, TypeError, ValueError):
                 return False
             return current == config and self._active_input_path() == input_path
@@ -2428,14 +2537,9 @@ def create_application_classes() -> tuple[Any, Any]:
                     f"{details['atom_count']} atoms"
                 )
             if self.active_feature.key == "interface" and trajectory.details:
-                details = trajectory.details
-                self.interface_panel.summary.setText(
-                    f"Twist {details['twist_angle_deg']:.4f}° · "
-                    f"surface indices {details['substrate_area_index']}/{details['film_area_index']}\n"
-                    f"Area {details['interface_area_A2']:.3f} Å² · "
-                    f"film metric strain {details['film_metric_strain_max']:.5f} · "
-                    f"{details['atom_count']} atoms"
-                )
+                self.interface_panel.show_report(trajectory.details)
+            if self.rendered_feature_key == "surface" and trajectory.details:
+                self.surface_panel.show_report(trajectory.details)
             maximum = len(trajectory.frames) - 1
             for control in (self.frame_slider, self.frame_spin):
                 blocker = QSignalBlocker(control)
@@ -2463,6 +2567,8 @@ def create_application_classes() -> tuple[Any, Any]:
             self.last_structure = structure
             self._render_structure(structure)
             metadata = self.trajectory.metadata[index]
+            if self.active_feature.key == "interface":
+                self.interface_panel.show_frame(metadata)
             rbt = ""
             if "rbt_alpha" in metadata and "rbt_beta" in metadata:
                 try:
@@ -2472,6 +2578,25 @@ def create_application_classes() -> tuple[Any, Any]:
                     pass
                 else:
                     rbt = f" · RBT α={alpha:.4f}, β={beta:.4f}"
+            elif "d1" in metadata and "d2" in metadata:
+                try:
+                    d1 = float(metadata["d1"])
+                    d2 = float(metadata["d2"])
+                except (TypeError, ValueError):
+                    pass
+                else:
+                    basis = metadata.get("shift_basis", "unspecified basis")
+                    basis_label = {
+                        "dscl": "DSCL cell",
+                        "supercell": "matched supercell",
+                    }.get(basis, str(basis))
+                    rbt = f" · shift ({basis_label}) d1={d1:.1f}, d2={d2:.1f}"
+            elif "in_plane_offset" in metadata:
+                offsets = metadata["in_plane_offset"]
+                if isinstance(offsets, (list, tuple)) and len(offsets) == 2:
+                    rbt = (
+                        f" · supercell fractional shift=({offsets[0]:.4f}, {offsets[1]:.4f})"
+                    )
             self.render_status.setText(
                 f"Frame {index}/{len(self.trajectory.frames) - 1}"
                 f" · {len(self.trajectory.frames)} frames · {len(structure)} atoms{rbt}"
@@ -2543,10 +2668,22 @@ def create_application_classes() -> tuple[Any, Any]:
             if self.preferences["show_plane"]:
                 plane_color = self.preferences["plane_color"]
                 fractions = (0.0, 0.5)
+                normal_axis = 0
+                plane_kind = "Interface"
                 if self.trajectory is not None:
                     metadata = self.trajectory.metadata[self.current_frame_index]
                     fractions = metadata.get("interface_plane_fractions", fractions)
-                planes = _grain_boundary_planes(np, pv, structure, fractions)
+                    try:
+                        normal_axis = int(metadata.get("interface_normal_axis", 0))
+                    except (TypeError, ValueError, OverflowError):
+                        normal_axis = 0
+                    if normal_axis not in (0, 1, 2):
+                        normal_axis = 0
+                    if "surface_plane_fractions" in metadata:
+                        fractions = sorted(set(metadata["surface_plane_fractions"]))
+                        normal_axis = 2
+                        plane_kind = "Surface"
+                planes = _grain_boundary_planes(np, pv, structure, fractions, normal_axis=normal_axis)
                 for index, plane in enumerate(planes):
                     self.viewport.add_mesh(
                         plane,
@@ -2559,11 +2696,20 @@ def create_application_classes() -> tuple[Any, Any]:
                     )
                 if fractions:
                     self.viewport.add_text(
-                        "Interface planes at fractional x: " + ", ".join(f"{x:.4f}" for x in fractions),
+                        f"{plane_kind} planes at fractional {'abc'[normal_axis]}: "
+                        + ", ".join(f"{x:.4f}" for x in fractions),
                         position="upper_left",
                         font_size=11,
                         color=plane_color,
                         name="gb_plane_label",
+                    )
+                if (self.trajectory is not None
+                        and self.trajectory.frames[self.current_frame_index] is structure):
+                    from core.interface.interface_overlay import add_dscl_overlay
+
+                    add_dscl_overlay(
+                        self.viewport, pv, structure,
+                        self.trajectory.metadata[self.current_frame_index],
                     )
             self.viewport.add_mesh(
                 _lattice_lines(np, pv, structure.lattice),
@@ -2654,8 +2800,12 @@ def create_application_classes() -> tuple[Any, Any]:
                             raise ValueError("click Generate crystal for the current Wyckoff parameters before exporting")
                     elif feature.key == "interface":
                         self.interface_panel.backend.parameters(config)
+                        if not self.interface_panel.ready_to_build():
+                            raise ValueError("search matching cells for the current inputs before exporting")
+                    elif feature.key == "surface":
+                        self.surface_panel.backend.parameters(config)
                     else:
-                        _omnigb_parameters(config)
+                        _bicrystal_parameters(config)
                     input_path = current_input
                     if not (
                         self.rendered_config == config
@@ -2666,8 +2816,14 @@ def create_application_classes() -> tuple[Any, Any]:
                 model_gb = _load_model_module(feature.script_path or MODEL_SCRIPT)
                 frame_count = (
                     len(cached.frames) if cached is not None
+                    else self.interface_panel.backend.frame_count(config) if feature.key == "interface"
+                    else 1 if feature.key == "surface"
                     else math.prod(_load_model_module().cnid_grid(config))
                 )
+                if feature.key in {"interface", "surface"} and cached is None:
+                    # The new settings or feature can contain fewer frames
+                    # than the sequence still displayed in the viewport.
+                    frame_index = min(frame_index, frame_count - 1)
             except (OSError, RuntimeError, json.JSONDecodeError, TypeError, ValueError) as exc:
                 self.error_label.setText(f"Could not export current settings: {exc}")
                 return
@@ -2713,7 +2869,7 @@ def create_application_classes() -> tuple[Any, Any]:
             self._export_request = request
             self._set_export_enabled(False)
             self.error_label.clear()
-            self.render_status.setText("Building current CNID grid for export…")
+            self.render_status.setText("Building current model for export…")
             self._build_timer.stop()
             self._start_export_build()
 
@@ -2882,16 +3038,18 @@ def create_application_classes() -> tuple[Any, Any]:
         def _read_editor_config(self) -> dict[str, Any]:
             """Return the current JSON editor contents as a configuration."""
 
+            if self.active_feature.key == "surface":
+                return self.surface_panel.config()
             if self.active_feature.key == "wyckoff":
                 return self.wyckoff_panel.config()
             if self.active_feature.key == "interface":
-                return _viewer_config(self.interface_panel.config())
+                return self.interface_panel.config()
             self.rotation_axis_editor.commit()
             self.gb_plane_editor.commit()
             # Toolbar/menu actions can run before a focused spinbox commits
             # its text. Finish those edits before reading the live JSON.
             for spin_type in (QDoubleSpinBox, QSpinBox):
-                for spin in self.omnigb_panel.findChildren(spin_type):
+                for spin in self.bicrystal_panel.findChildren(spin_type):
                     spin.interpretText()
             config = json.loads(self.json_editor.toPlainText())
             if not isinstance(config, dict):
@@ -2899,6 +3057,9 @@ def create_application_classes() -> tuple[Any, Any]:
             return _viewer_config(config)
 
         def save_config(self) -> None:
+            if self.active_feature.key == "surface":
+                self.surface_panel.save_config()
+                return
             if self.active_feature.key == "wyckoff":
                 self.wyckoff_panel.save_config()
                 return
@@ -2929,7 +3090,11 @@ def create_application_classes() -> tuple[Any, Any]:
                 self.error_label.setText(f"Could not save gbin.json: {exc}")
 
         def save_config_as(self) -> None:
-            """Save the live JSON editor state to a separate snapshot file."""
+            """Save the current feature's configuration to a separate snapshot file."""
+
+            if self.active_feature.key == "surface":
+                self.surface_panel.save_config()
+                return
 
             if self.active_feature.key == "wyckoff":
                 self.wyckoff_panel.save_config()
@@ -2969,9 +3134,12 @@ def create_application_classes() -> tuple[Any, Any]:
             self.error_label.setText(f"Saved current JSON: {target}")
 
         def closeEvent(self, event: Any) -> None:
+            interface_search = (
+                self.interface_panel.search_worker if hasattr(self, "interface_panel") else None
+            )
             running_worker = next(
                 (
-                    worker for worker in (self.worker, self.scan_worker, self.export_worker)
+                    worker for worker in (self.worker, self.scan_worker, self.export_worker, interface_search)
                     if worker is not None and worker.isRunning()
                 ),
                 None,
@@ -2983,13 +3151,13 @@ def create_application_classes() -> tuple[Any, Any]:
             if not self._export_build_active and not self._export_write_active:
                 self._export_request = None
             if running_worker is not None:
-                # InterfaceMaster cannot be interrupted halfway through a build.
-                # Defer destruction so Qt never deletes a running QThread.
+                # Native library calls finish before worker cancellation takes
+                # effect. Defer destruction of every running QThread.
                 self.auto_refresh = False
                 self._build_timer.stop()
                 self._json_timer.stop()
                 self.render_status.setText("Finishing the build before closing…")
-                if isinstance(running_worker, BuildWorker):
+                if isinstance(running_worker, BuildWorker) or running_worker is interface_search:
                     running_worker.requestInterruption()
                 running_worker.finished.connect(self.close)
                 event.ignore()
@@ -2997,11 +3165,11 @@ def create_application_classes() -> tuple[Any, Any]:
             self.viewport.close()
             event.accept()
 
-    return QApplication, GrainBoundaryViewer
+    return QApplication, CCkitViewer
 
 
 def _default_paths() -> tuple[Path | None, Path | None]:
-    """Find the example files without requiring a working directory."""
+    """Find the source example structure; JSON is loaded only when requested."""
 
     if getattr(sys, "frozen", False):
         # Double-click opens the file picker UI instead of starting a bundled
@@ -3009,11 +3177,7 @@ def _default_paths() -> tuple[Path | None, Path | None]:
         return None, None
     directory = REPOSITORY_ROOT / "example"
     input_path = directory / "ZrO2.cif"
-    config_path = directory / "gbin.json"
-    return (
-        input_path if input_path.is_file() else None,
-        config_path if config_path.is_file() else None,
-    )
+    return input_path if input_path.is_file() else None, None
 
 
 def _verify_window(
@@ -3199,7 +3363,7 @@ def main() -> int:
     """Launch the Windows desktop viewer."""
 
     parser = argparse.ArgumentParser(
-        description="Interactive CCkit grain-boundary viewer for model-gb.py."
+        description="Interactive CCkit viewer for crystal structures, interfaces, and trajectories."
     )
     parser.add_argument(
         "structure",
@@ -3209,7 +3373,7 @@ def main() -> int:
     parser.add_argument(
         "config",
         nargs="?",
-        help="gbin.json configuration file",
+        help="optional gbin.json configuration file (otherwise use built-in parameters)",
     )
     parser.add_argument("--verify", type=Path, help=argparse.SUPPRESS)
     arguments = parser.parse_args()
@@ -3224,7 +3388,7 @@ def main() -> int:
         return 2
 
     application = QApplication(sys.argv)
-    application.setApplicationName("CCkit Grain Boundary Viewer")
+    application.setApplicationName("CCkitViewer")
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QPixmap
     from PySide6.QtWidgets import QSplashScreen
@@ -3233,7 +3397,7 @@ def main() -> int:
     splash_image.fill(Qt.GlobalColor.darkBlue)
     splash = QSplashScreen(splash_image)
     splash.showMessage(
-        "CCkit Grain Boundary Viewer\nLoading the renderer…",
+        "CCkitViewer\nLoading the renderer…",
         Qt.AlignmentFlag.AlignCenter,
         Qt.GlobalColor.white,
     )

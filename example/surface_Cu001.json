@@ -1,0 +1,19 @@
+{
+  "mode": "build",
+  "bulk_structure": "Cu/POSCAR_Cu",
+  "plane": [0, 0, 1],
+  "plane_notation": "three",
+  "direction_a": [1, 0, 0],
+  "direction_a_notation": "three",
+  "direction_b": [0, 1, 0],
+  "direction_b_notation": "three",
+  "repeat_a": 1,
+  "repeat_b": 1,
+  "thickness": 15.0,
+  "vacuum": 15.0,
+  "termination_mode": "layer",
+  "termination_index": 0,
+  "cut_phase": 0.0,
+  "layer_tolerance": 0.1,
+  "max_atoms": 50000
+}

@@ -1,6 +1,6 @@
 # CCkit 功能说明：
 # 扫描旋转轴的 CSL 候选，并按 gbin.json 构建对称倾斜晶界 POSCAR。
-"""Build rotational symmetric-tilt grain boundaries with InterfaceMaster.
+"""Bicrystal Builder: build rotational symmetric-tilt boundaries with InterfaceMaster.
 
 The command has two modes selected by ``gbin.json`` (or ``--mode``):
 
@@ -40,6 +40,36 @@ import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
+
+
+def default_viewer_config() -> dict[str, Any]:
+    """Start the GUI in scan mode with independent Cu-example parameters."""
+
+    return {
+        "mode": "scan",
+        "csl_mode": "near",
+        "rotation_axis": [0, 0, 1],
+        "rotation_angle_deg": 32.0,
+        "sigma": 5,
+        "max_sigma": 6,
+        "gb_plane": [2, -1, 0],
+        "mirror": True,
+        "normal_distance": 0.0,
+        "vacuum": 0.0,
+        "normal_ortho": False,
+        "plane_ortho": False,
+        "termination_shift": {"dp1": 0.0, "dp2": 0.0},
+        "tolerances": {
+            "du": 0.2,
+            "area": 0.2,
+            "deformation": 0.1,
+            "integer": 0.01,
+        },
+        "angle_start_deg": 0.0,
+        "angle_stop_deg": 180.0,
+        "angle_step_deg": 1.0,
+        "cnid_grid": [4, 4],
+    }
 
 
 def _backend() -> tuple[Any, Any, Any, Any, Any, Any]:

@@ -39,7 +39,7 @@ def space_group(number: int) -> Any:
         from pyxtal.symmetry import Group
     except ImportError as exc:
         raise RuntimeError(
-            "Wyckoff model requires PyXtal. Install requirements-gb-viewer.txt "
+            "Wyckoff model requires PyXtal. Install requirements-viewer.txt "
             "in the Python environment running this viewer."
         ) from exc
     return Group(number, style="spglib")

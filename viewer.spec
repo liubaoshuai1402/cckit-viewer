@@ -1,4 +1,4 @@
-# PyInstaller onedir build for the standalone CCkit grain-boundary viewer.
+# PyInstaller onedir build for the standalone CCkitViewer application.
 from pathlib import Path
 
 import six
@@ -20,21 +20,35 @@ datas = [
 for core_source in sorted((VISUALIZE_DIR / "core").rglob("*.py")):
     destination = core_source.parent.relative_to(VISUALIZE_DIR).as_posix()
     datas.append((str(core_source), destination))
-for sample_name in ("ZrO2.cif", "gbin.json"):
+for sample_name in ("ZrO2.cif", "gbin.json", "surface_Cu001.json", "Cu/POSCAR_Cu"):
     sample_path = REPOSITORY_ROOT / "example" / sample_name
     if sample_path.is_file():
-        datas.append((str(sample_path), "example"))
+        datas.append((str(sample_path), sample_path.parent.relative_to(REPOSITORY_ROOT).as_posix()))
 
 binaries = []
 hiddenimports = [
+    "viewer_widgets",
     "six",
     "ase",
     "ase.io.extxyz",
     "ase.io.trajectory",
     "pyxtal.symmetry",
-    "core.omnigb.omnigb_backend",
+    "core.bicrystal.bicrystal_backend",
+    "core.surface.surface_backend",
+    "core.surface.surface_panel",
     "core.interface.interface_backend",
     "core.interface.interface_panel",
+    "core.interface.interface_overlay",
+    "core.interface.pymatgen_engine",
+    "core.interface.interface_master_engine",
+    "core.interface.commensurability",
+    "core.interface.registry_analysis",
+    "scipy.spatial",
+    "pymatgen.analysis.interfaces.zsl",
+    "pymatgen.analysis.interfaces.coherent_interfaces",
+    "pymatgen.analysis.elasticity.strain",
+    "pymatgen.core.interface",
+    "pymatgen.core.surface",
     "core.wyckoff.wyckoff_model",
     "core.wyckoff.wyckoff_panel",
     "interfacemaster",
@@ -72,7 +86,7 @@ binaries = [
 ]
 
 analysis = Analysis(
-    [str(VISUALIZE_DIR / "gb_viewer.py")],
+    [str(VISUALIZE_DIR / "viewer.py")],
     pathex=[str(VISUALIZE_DIR), str(REPOSITORY_ROOT), str(INTERFACE_MASTER_ROOT)],
     binaries=binaries,
     datas=datas,
@@ -89,7 +103,7 @@ exe = EXE(
     analysis.scripts,
     [],
     exclude_binaries=True,
-    name="CCkitGBViewer",
+    name="CCkitViewer",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -115,5 +129,5 @@ COLLECT(
     runtime_datas,
     strip=False,
     upx=True,
-    name="CCkitGBViewer",
+    name="CCkitViewer",
 )

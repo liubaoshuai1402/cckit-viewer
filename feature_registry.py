@@ -64,44 +64,42 @@ def create_default_registry(
 ) -> FeatureRegistry:
     """Create the shell's built-in feature catalog.
 
-    OmniGB, Interface Builder and Wyckoff model are connected. Remaining entries are named
+    Bicrystal Builder, Surface Builder, Interface Builder and Wyckoff model are connected. Remaining entries are named
     extension points so future scripts can acquire a card without changing the
     viewer's top-level navigation or build-worker contract.
     """
 
     core_directory = core_directory or repository_root / "core"
-    model_script = core_directory / "omnigb" / "omnigb_backend.py"
+    model_script = core_directory / "bicrystal" / "bicrystal_backend.py"
     return FeatureRegistry(
         (
             ViewerFeature(
-                key="omnigb",
-                name="OmniGB",
+                key="bicrystal",
+                name="Bicrystal Builder",
                 description=(
-                    "Build and inspect symmetric-tilt grain boundaries with "
-                    "model-gb.py."
+                    "Build bicrystal models and inspect symmetric-tilt grain boundaries."
                 ),
                 script_path=model_script,
-                card_title="OmniGB parameters",
+                card_title="Bicrystal Builder parameters",
             ),
             ViewerFeature(
                 key="wyckoff",
-                name="wyckoff model",
+                name="Wyckoff model",
                 description="Generate a crystal from a space group, lattice constants and Wyckoff positions.",
                 script_path=core_directory / "wyckoff" / "wyckoff_model.py",
-                card_title="wyckoff model",
+                card_title="Wyckoff model",
             ),
             ViewerFeature(
                 key="surface",
                 name="Surface Builder",
-                description="Reserved for a future surface generation script.",
-                script_path=None,
-                available=False,
-                card_title="Surface parameters",
+                description="Cut oriented surface slabs with prescribed in-plane directions, terminations and vacuum.",
+                script_path=core_directory / "surface" / "surface_backend.py",
+                card_title="Surface Builder",
             ),
             ViewerFeature(
                 key="interface",
                 name="Interface Builder",
-                description="Match two contact planes and sample their CNID with InterfaceMaster.",
+                description="Build heterointerfaces with pymatgen or InterfaceMaster CSL/DSCL matching.",
                 script_path=core_directory / "interface" / "interface_backend.py",
                 available=True,
                 card_title="Interface parameters",

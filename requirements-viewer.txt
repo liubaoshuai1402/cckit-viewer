@@ -1,0 +1,12 @@
+# High-quality interactive rendering for the Windows CCkitViewer application.
+numpy
+scipy
+pymatgen>=2026.9.24
+pyxtal>=1.1.1,<2
+ase
+six
+PySide6
+pyvista
+pyvistaqt
+vtk
+pyinstaller

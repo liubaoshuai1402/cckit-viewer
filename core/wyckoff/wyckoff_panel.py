@@ -10,9 +10,11 @@ from typing import Any, Callable
 
 from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import (
-    QFileDialog, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QFileDialog, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLineEdit,
     QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
+
+from viewer_widgets import WrappingLabel as QLabel
 
 
 class WyckoffPanel(QWidget):
@@ -34,13 +36,13 @@ class WyckoffPanel(QWidget):
         self.config_path: Path | None = None
         self.rows: list[dict[str, Any]] = []
         self._updating = True
-        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        card = QGroupBox("wyckoff model")
-        card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        card = QGroupBox("Wyckoff model")
+        card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(10, 14, 10, 10)
         card_layout.setSpacing(8)
@@ -65,7 +67,7 @@ class WyckoffPanel(QWidget):
         card_layout.addWidget(self.setting_label)
 
         self.lattice_group = QGroupBox("Lattice constants (Å); angles (°)")
-        self.lattice_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        self.lattice_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self.lattice_layout = QGridLayout(self.lattice_group)
         self.lattice_layout.setContentsMargins(10, 14, 10, 10)
         self.lattice_layout.setHorizontalSpacing(10)
@@ -87,7 +89,7 @@ class WyckoffPanel(QWidget):
         card_layout.addWidget(self.lattice_group)
 
         sites_group = QGroupBox("Wyckoff positions")
-        sites_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        sites_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self.sites_layout = QVBoxLayout(sites_group)
         self.sites_layout.setContentsMargins(10, 14, 10, 10)
         self.sites_layout.setSpacing(8)
@@ -182,7 +184,7 @@ class WyckoffPanel(QWidget):
 
         widget = QFrame()
         widget.setObjectName("wyckoffSiteCard")
-        widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         widget.setStyleSheet(
             "QFrame#wyckoffSiteCard { background: #ffffff; border: 1px solid #cbd5e1; "
             "border-radius: 6px; }"
@@ -233,7 +235,7 @@ class WyckoffPanel(QWidget):
         )
         automatic_layout.addWidget(equivalent_selector)
         parameter_group = QGroupBox("Free parameters (fractional)")
-        parameter_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        parameter_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         parameter_layout = QGridLayout(parameter_group)
         parameter_layout.setContentsMargins(8, 14, 8, 8)
         parameter_layout.setHorizontalSpacing(8)

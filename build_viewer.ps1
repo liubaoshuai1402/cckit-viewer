@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 $visualizeDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = $visualizeDir
 $interfaceMasterRoot = Join-Path (Split-Path -Parent $repositoryRoot) "interface_master"
-$specPath = Join-Path $visualizeDir "gb_viewer.spec"
+$specPath = Join-Path $visualizeDir "viewer.spec"
 $distPath = Join-Path $visualizeDir "dist"
 $workPath = Join-Path $visualizeDir "build"
 
@@ -30,7 +30,11 @@ if ([string]::IsNullOrWhiteSpace($pythonCommand)) {
 # Fail before packaging if any required runtime is absent from the build host.
 & $pythonCommand -c "import ase, numpy, pymatgen, pyxtal, PySide6, pyvista, pyvistaqt, PyInstaller, interfacemaster"
 if ($LASTEXITCODE -ne 0) {
-    throw "A viewer dependency is missing. Install requirements-gb-viewer.txt in the build environment."
+    throw "A viewer dependency is missing. Install requirements-viewer.txt in the build environment."
+}
+& $pythonCommand -c "from pymatgen.analysis.interfaces.coherent_interfaces import CoherentInterfaceBuilder; from pymatgen.analysis.interfaces.zsl import ZSLGenerator; from interfacemaster.cellcalc import DSCcalc, LLL, get_primitive_hkl, get_pri_vec_inplane; from scipy.spatial import cKDTree"
+if ($LASTEXITCODE -ne 0) {
+    throw "An interface engine dependency is unavailable. Install requirements-viewer.txt and make InterfaceMaster available in the build environment."
 }
 
 $arguments = @("--noconfirm")
@@ -50,4 +54,4 @@ try {
     Pop-Location
 }
 
-Write-Host "Standalone viewer: $visualizeDir\dist\CCkitGBViewer\CCkitGBViewer.exe"
+Write-Host "Standalone viewer: $visualizeDir\dist\CCkitViewer\CCkitViewer.exe"
